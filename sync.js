@@ -21,11 +21,11 @@
   function clearSession(){localStorage.removeItem(SESSION_KEY)}
   function toast(msg){const t=$("toast");if(t){t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),3200)}}
   function status(msg,ok=false,error=false){const el=$("syncStatus");if(el){el.textContent=msg;el.className="sync-status"+(ok?" ok":"")+(error?" error":"")}}
-  function readLocal(){let exams=[],incomplete=null;try{exams=JSON.parse(localStorage.getItem(DB_KEY)||"[]")}catch{}try{incomplete=JSON.parse(localStorage.getItem(INCOMPLETE_KEY)||"null")}catch{}const incompleteDeleted=localStorage.getItem(INCOMPLETE_DELETED_KEY)||null;return{exams:Array.isArray(exams)?exams:[],incomplete,incompleteDeleted}}
-  function writeLocal(exams,incomplete){localStorage.setItem(DB_KEY,JSON.stringify(exams));if(incomplete)localStorage.setItem(INCOMPLETE_KEY,JSON.stringify(incomplete));else localStorage.removeItem(INCOMPLETE_KEY);window.dispatchEvent(new Event("storage"))}
-  function fingerprint(data){return JSON.stringify({exams:data.exams,incomplete:data.incomplete})}
+  function readLocal(){let exams=[],incomplete=null,study=null;try{exams=JSON.parse(localStorage.getItem(DB_KEY)||"[]")}catch{}try{incomplete=JSON.parse(localStorage.getItem(INCOMPLETE_KEY)||"null")}catch{}try{study=JSON.parse(localStorage.getItem("azmoon_study_v1")||"null")}catch{} const incompleteDeleted=localStorage.getItem(INCOMPLETE_DELETED_KEY)||null;return{exams:Array.isArray(exams)?exams:[],incomplete,incompleteDeleted,study}}
+  function writeLocal(exams,incomplete,study){localStorage.setItem(DB_KEY,JSON.stringify(exams));if(incomplete)localStorage.setItem(INCOMPLETE_KEY,JSON.stringify(incomplete));else localStorage.removeItem(INCOMPLETE_KEY);if(study)localStorage.setItem("azmoon_study_v1",JSON.stringify(study));window.dispatchEvent(new Event("storage"))}
+  function fingerprint(data){return JSON.stringify({exams:data.exams,incomplete:data.incomplete,study:data.study})}
   function loadSnapshot(){try{return JSON.parse(localStorage.getItem(SNAPSHOT_KEY)||"null")}catch{return null}}
-  function saveSnapshot(data){localStorage.setItem(SNAPSHOT_KEY,fingerprint(data));lastLocalFingerprint=fingerprint(data)}
+  function saveSnapshot(data){localStorage.setItem(SNAPSHOT_KEY,JSON.stringify(data));lastLocalFingerprint=fingerprint(data)}
   function loadDeleted(){try{return JSON.parse(localStorage.getItem(DELETED_KEY)||"[]")}catch{return[]}}
   function saveDeleted(v){localStorage.setItem(DELETED_KEY,JSON.stringify(v))}
   function nowIso(){return new Date().toISOString()}
@@ -45,7 +45,10 @@
     const s=session();if(s?.access_token&&!options.skipAuth)headers.Authorization=`Bearer ${s.access_token}`;
     const res=await fetch(c.url+path,Object.assign({},options,{headers}));
     const text=await res.text();let body=null;try{body=text?JSON.parse(text):null}catch{body=text}
-    if(!res.ok){const msg=body?.msg||body?.message||body?.error_description||body?.error||`HTTP ${res.status}`;throw new Error(msg)}
+    if(!res.ok){
+      const msg=body?.msg||body?.message||body?.error_description||body?.error||body?.details||body?.hint||`HTTP ${res.status}`;
+      throw new Error(msg)
+    }
     return body;
   }
   async function auth(path,body){return api(path,{method:"POST",body:JSON.stringify(body),skipAuth:true})}
@@ -111,7 +114,33 @@
   }
 
   async function fetchRows(){await refreshIfNeeded();return api("/rest/v1/exams?select=id,user_id,data,updated_at,deleted&order=updated_at.asc",{method:"GET"})}
-  async function upsertRows(rows){if(!rows.length)return;await refreshIfNeeded();await api("/rest/v1/exams?on_conflict=id,user_id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(rows)})}
+  async function upsertRows(rows){
+    if(!rows.length)return;
+    await refreshIfNeeded();
+
+    // PostgREST can reject a bulk JSON array with
+    // "All object keys must match" when one row has a different shape.
+    // Normalize every row to the exact exams table shape and send rows
+    // one-by-one. This is a little slower, but much more reliable for
+    // a small personal dataset and avoids losing the whole sync.
+    const cleanRows = rows.map(r => ({
+      id: String(r.id),
+      user_id: String(r.user_id),
+      data: (r.data && typeof r.data === "object") ? r.data : {},
+      updated_at: r.updated_at || nowIso(),
+      deleted: !!r.deleted
+    }));
+
+    for(const row of cleanRows){
+      await api("/rest/v1/exams?on_conflict=id,user_id",{
+        method:"POST",
+        headers:{
+          Prefer:"resolution=merge-duplicates,return=minimal"
+        },
+        body:JSON.stringify(row)
+      });
+    }
+  }
 
   function stampLocalChanges(data,snapshot){
     const stamp=nowIso();
@@ -137,15 +166,29 @@
     try{
       await refreshIfNeeded();
       let data=readLocal();
+      const syncStartFingerprint = fingerprint(data);
       let snapshot=loadSnapshot();
       stampLocalChanges(data,snapshot);
       const user=session()?.user?.id?session().user:await getUser();
       if(!session()?.user?.id){const ss=session();ss.user=user;saveSession(ss)}
       const serverRows=await fetchRows();
-      const server=new Map(serverRows.map(r=>[r.id,r]));
+      // Legacy bad rows may exist in Supabase with an empty data object.
+      // They are not real exams and must never be merged into local history.
+      const badServerRows = serverRows.filter(r =>
+        !["__study__","__incomplete__"].includes(r.id) &&
+        !r.deleted &&
+        !(r.data && typeof r.data === "object" && typeof r.data.id === "string" &&
+          r.data.id === r.id && typeof r.data.name === "string" && r.data.name.trim())
+      );
+      const server= new Map(serverRows.filter(r => !badServerRows.includes(r)).map(r=>[r.id,r]));
       const deleted=loadDeleted();
       const localMap=new Map(data.exams.map(e=>[e.id,e]));
       const merged=[];const upload=[];const newDeleted=[];let changed=false;
+      // Queue invalid legacy server rows for deletion after upload is initialized.
+      // This avoids the temporal-dead-zone error from referencing `upload` early.
+      for (const bad of badServerRows) {
+        upload.push({id:String(bad.id),user_id:user.id,data:{},updated_at:nowIso(),deleted:true});
+      }
 
       const ids=new Set([...localMap.keys(),...server.keys(),...deleted.map(d=>d.id)]);
       for(const id of ids){
@@ -172,6 +215,13 @@
         }
       }
 
+      const localStudy=data.study, serverStudy=server.get("__study__");
+      if(localStudy && (!serverStudy || later(localStudy.updatedAt,serverStudy.updated_at))){
+        upload.push({id:"__study__",user_id:user.id,data:localStudy,updated_at:localStudy.updatedAt||nowIso(),deleted:false});
+      } else if(serverStudy?.data && (!localStudy || later(serverStudy.updated_at,localStudy.updatedAt))){
+        data.study=serverStudy.data; changed=true;
+      }
+
       const localInc=data.incomplete, serverInc=server.get("__incomplete__");
       const incompleteDeleted=data.incompleteDeleted;
       if(incompleteDeleted && (!serverInc || later(incompleteDeleted,serverInc.updated_at))){
@@ -189,12 +239,26 @@
       }
 
       if(upload.length)await upsertRows(upload);
+
+      // اگر هنگام همگام‌سازی کاربر آزمون را تمام کرده باشد، نسخهٔ محلی
+      // جدیدتر از داده‌ای است که ابتدای sync خوانده‌ایم. در این حالت نباید
+      // دادهٔ قدیمی را روی localStorage بنویسیم و آزمون تازه‌ثبت‌شده را ناپدید کنیم.
+      const currentLocalFingerprint = fingerprint(readLocal());
+      const localChangedDuringSync = currentLocalFingerprint !== syncStartFingerprint;
+
       data.exams=merged;
       saveDeleted(newDeleted);
-      writeLocal(data.exams,data.incomplete);
-      saveSnapshot({exams:data.exams,incomplete:data.incomplete});
-      renderHomeIfAvailable();
-      status("همگام‌سازی با موفقیت انجام شد ✓",true);if(force)toast("همگام‌سازی انجام شد.");
+      if(!localChangedDuringSync){
+        writeLocal(data.exams,data.incomplete,data.study);
+        saveSnapshot({exams:data.exams,incomplete:data.incomplete});
+        renderHomeIfAvailable();
+        status("همگام‌سازی با موفقیت انجام شد ✓",true);
+      }else{
+        // تغییر جدید محلی را نگه می‌داریم؛ poll بعدی آن را با سرور sync می‌کند.
+        lastLocalFingerprint = null;
+        status("همگام‌سازی انجام شد؛ تغییر جدید شما هم حفظ شد ✓",true);
+      }
+      if(force)toast("همگام‌سازی انجام شد.");
     }catch(e){
       console.error(e);
       const m=String(e?.message||e);

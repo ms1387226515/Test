@@ -7,7 +7,7 @@
   const SAVE_INTERVAL = 2500;
 
   const $ = (id) => document.getElementById(id);
-  const views = { home: $("homeView"), create: $("createView"), solve: $("solveView"), result: $("resultView") };
+  const views = { home: $("homeView"), create: $("createView"), solve: $("solveView"), result: $("resultView"), study: $("studyDashboard") };
 
   let exams = loadExams();
   let activeExam = null;
@@ -21,17 +21,56 @@
   let toastTimer = null;
 
   function ensureExamShape(exam) {
-    if (!Array.isArray(exam.markers)) exam.markers = Array(exam.questionNumbers?.length || 0).fill(null);
-    if (!Array.isArray(exam.questionTimes)) exam.questionTimes = Array(exam.questionNumbers?.length || 0).fill(0);
-    if (!Array.isArray(exam.answers)) exam.answers = Array(exam.questionNumbers?.length || 0).fill(null);
+    exam = exam && typeof exam === "object" ? exam : {};
+
+    // Some older/cloud-synced records can arrive without questionNumbers.
+    // Rebuild the list from the stored range so one malformed record cannot
+    // stop the whole history list from rendering.
+    if (!Array.isArray(exam.questionNumbers)) {
+      const start = Number(exam.rangeStart);
+      const end = Number(exam.rangeEnd);
+      const type = exam.testType || "all";
+      if (Number.isInteger(start) && Number.isInteger(end) && end >= start && start >= 1) {
+        exam.questionNumbers = [];
+        for (let n = start; n <= end; n++) {
+          if (type === "odd" && n % 2 === 0) continue;
+          if (type === "even" && n % 2 !== 0) continue;
+          exam.questionNumbers.push(n);
+        }
+      } else {
+        exam.questionNumbers = [];
+      }
+    }
+
+    const qLen = exam.questionNumbers.length;
+    if (!Array.isArray(exam.markers)) exam.markers = Array(qLen).fill(null);
+    if (!Array.isArray(exam.questionTimes)) exam.questionTimes = Array(qLen).fill(0);
+    if (!Array.isArray(exam.answers)) exam.answers = Array(qLen).fill(null);
+    if (!Array.isArray(exam.key)) exam.key = Array(qLen).fill(null);
+    if (!Array.isArray(exam.statuses)) exam.statuses = Array(qLen).fill("unanswered");
     return exam;
+  }
+
+  function isValidExamRecord(exam) {
+    return !!(exam && typeof exam === "object" &&
+      typeof exam.id === "string" && exam.id.trim() &&
+      typeof exam.name === "string" && exam.name.trim() &&
+      Number.isFinite(Number(exam.startTime)) &&
+      (exam.status === "in_progress" || exam.status === "completed" || exam.status == null));
   }
 
   function loadExams() {
     try {
       const raw = localStorage.getItem(DB_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.map(ensureExamShape) : [];
+      if (!Array.isArray(parsed)) return [];
+      const cleaned = parsed.filter(isValidExamRecord).map(ensureExamShape);
+      // Purge malformed legacy rows locally so they cannot keep reappearing
+      // in the history count or list. Valid exams are left untouched.
+      if (cleaned.length !== parsed.length) {
+        localStorage.setItem(DB_KEY, JSON.stringify(cleaned));
+      }
+      return cleaned;
     } catch {
       return [];
     }
@@ -283,7 +322,7 @@
     const rangeTo = hasTo ? toRaw : Infinity;
     const sort = $("sortFilter").value;
 
-    let list = exams.filter(e => {
+    let list = exams.filter(isValidExamRecord).filter(e => {
       const text = `${e.name} ${e.subject} ${e.topic}`.toLocaleLowerCase("fa");
       const questions = Array.isArray(e.questionNumbers) ? e.questionNumbers : [];
       // Range filter keeps an exam when at least one of its actual test numbers
@@ -307,7 +346,11 @@
     $("examList").innerHTML = "";
     $("emptyState").classList.toggle("hidden", list.length !== 0);
 
-    list.forEach(exam => {
+    list.forEach(rawExam => {
+      // Normalize every history item independently. A single legacy/bad row
+      // must never prevent the remaining exams from being displayed.
+      const exam = ensureExamShape(rawExam);
+      const qnums = Array.isArray(exam.questionNumbers) ? exam.questionNumbers : [];
       const item = document.createElement("div");
       item.className = "exam-item";
       const percent = exam.percent == null ? "ناتمام" : `${formatPercent(exam.percent)}٪`;
@@ -317,8 +360,8 @@
           <div class="exam-meta">
             <span>${escapeHtml(exam.subject || "بدون درس")}</span>
             ${exam.topic ? `<span>• ${escapeHtml(exam.topic)}</span>` : ""}
-            <span>• ${faNum(exam.questionNumbers.length)} تست</span>
-            <span>• ${faNum(exam.rangeStart ?? exam.questionNumbers[0])} تا ${faNum(exam.rangeEnd ?? exam.questionNumbers[exam.questionNumbers.length - 1])}</span>
+            <span>• ${faNum(qnums.length)} تست</span>
+            <span>• ${faNum(exam.rangeStart ?? qnums[0] ?? 0)} تا ${faNum(exam.rangeEnd ?? qnums[qnums.length - 1] ?? 0)}</span>
             <span>• ${typeLabel(exam.testType)}</span>
             <span>• ${formatDate(exam.startTime)}</span>
             <span>• ${percent}</span>
@@ -900,6 +943,27 @@
   }
 
   // Events
+  function goHome() {
+    cancelAutoAdvance();
+    stopTimer();
+    try { renderHome(); } catch (_) {}
+    try { showView("home"); } catch (_) {
+      Object.entries(views).forEach(([key, el]) => {
+        if (el) el.classList.toggle("hidden", key !== "home");
+      });
+    }
+    window.scrollTo({top: 0, behavior: "instant"});
+  }
+
+  window.__azmoonGoHome = goHome;
+
+  const historyNav = $("historyNav");
+  if (historyNav) historyNav.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goHome(); }, true);
+
+  ["studyBackHome","backHomeFromCreate","backHomeFromSolve","backHomeFromResult"].forEach(id => {
+    const btn = $(id);
+    if (btn) btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goHome(); }, true);
+  });
   $("newExamTop").addEventListener("click", openCreate);
   $("newExamEmpty").addEventListener("click", openCreate);
   $("backHomeFromCreate").addEventListener("click", () => { renderHome(); showView("home"); });
