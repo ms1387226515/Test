@@ -44,6 +44,15 @@
 
     const qLen = exam.questionNumbers.length;
     if (!Array.isArray(exam.markers)) exam.markers = Array(qLen).fill(null);
+    // v14.4: markers set during the exam are permanent and separate from
+    // post-exam review marks. Migrate the old careless/review markers without
+    // destroying them.
+    if (!Array.isArray(exam.postMarkers)) exam.postMarkers = Array(qLen).fill(null);
+    if (!Array.isArray(exam.resolved)) exam.resolved = Array(qLen).fill(false);
+    for (let i = 0; i < qLen; i++) {
+      if (exam.markers[i] === "careless") { exam.markers[i] = null; exam.postMarkers[i] = exam.postMarkers[i] || "careless"; }
+      if (exam.markers[i] === "review") { exam.markers[i] = null; exam.postMarkers[i] = exam.postMarkers[i] || "selected"; }
+    }
     if (!Array.isArray(exam.questionTimes)) exam.questionTimes = Array(qLen).fill(0);
     if (!Array.isArray(exam.answers)) exam.answers = Array(qLen).fill(null);
     if (!Array.isArray(exam.key)) exam.key = Array(qLen).fill(null);
@@ -258,18 +267,25 @@
     const all = [];
     exams.forEach(exam => {
       ensureExamShape(exam);
-      exam.markers.forEach((marker, i) => {
-        if (marker !== markerFilter) return;
+      exam.questionNumbers.forEach((num, i) => {
+        const matches = markerFilter === "wrong"
+          ? exam.statuses[i] === "wrong"
+          : markerFilter === "selected"
+            ? exam.postMarkers[i] === "selected"
+            : exam.markers[i] === markerFilter;
+        if (!matches) return;
         all.push({
-          exam,
-          index: i,
-          number: exam.questionNumbers[i],
-          marker
+          exam, index: i, number: num,
+          marker: markerFilter === "wrong" ? "wrong" : (markerFilter === "selected" ? "selected" : exam.markers[i])
         });
       });
     });
 
-    const info = markerLabels[markerFilter];
+    const info = markerFilter === "wrong"
+      ? {icon:"✕",label:"غلط‌ها"}
+      : markerFilter === "selected"
+        ? postMarkerLabels.selected
+        : markerLabels[markerFilter];
     titleEl.textContent = `${info.icon} سؤال‌های «${info.label}»`;
     countEl.textContent = `${faNum(all.length)} سؤال`;
     panel.classList.remove("hidden");
@@ -331,7 +347,12 @@
         ? true
         : questions.some(n => n >= rangeFrom && n <= rangeTo);
 
-      const hasMarker = !markerFilter || (Array.isArray(e.markers) && e.markers.includes(markerFilter));
+      const hasMarker = !markerFilter
+        || (markerFilter === "wrong"
+          ? (Array.isArray(e.statuses) && e.statuses.includes("wrong"))
+          : markerFilter === "selected"
+            ? (Array.isArray(e.postMarkers) && e.postMarkers.includes("selected"))
+            : (Array.isArray(e.markers) && e.markers.includes(markerFilter)));
       return (!search || text.includes(search)) &&
         (!subject || e.subject === subject) &&
         (!topic || e.topic === topic) &&
@@ -418,6 +439,8 @@
       statuses: Array(questionNumbers.length).fill("unanswered"),
       questionTimes: Array(questionNumbers.length).fill(0),
       markers: Array(questionNumbers.length).fill(null),
+      postMarkers: Array(questionNumbers.length).fill(null),
+      resolved: Array(questionNumbers.length).fill(false),
       correct: 0, wrong: 0, blank: questionNumbers.length, percent: null,
       status: "in_progress", currentIndex: 0, lastTickAt: now
     };
@@ -555,10 +578,15 @@
   }
 
   const markerLabels = {
-    hard: { icon: "★", label: "سخت" },
-    unknown: { icon: "×", label: "بلد نبودم" },
+    hard: { icon: "●", label: "سخت" },
+    doubt: { icon: "?", label: "با شک" },
+    unknown: { icon: "×", label: "بلد نبودم" }
+  };
+
+  const postMarkerLabels = {
     careless: { icon: "−", label: "بی‌دقتی" },
-    review: { icon: "○", label: "مرور" }
+    unknown_after: { icon: "×", label: "بلد نبودم" },
+    selected: { icon: "★", label: "تست منتخب" }
   };
 
   function toggleMarker(marker) {
@@ -570,6 +598,7 @@
   }
 
   function markerHtml(marker) {
+    if (marker === "wrong") return `<span class="marker-chip wrong-mark">✕ غلط</span>`;
     if (!marker || !markerLabels[marker]) return "−";
     const m = markerLabels[marker];
     return `<span class="marker-chip ${marker}">${m.icon} ${m.label}</span>`;
@@ -578,11 +607,26 @@
   function setStoredMarker(exam, index, marker) {
     exam.markers[index] = exam.markers[index] === marker ? null : marker;
     const idx = exams.findIndex(e => e.id === exam.id);
-    if (idx >= 0) {
-      exams[idx] = exam;
-      saveExams();
-    }
+    if (idx >= 0) { exams[idx] = exam; saveExams(); }
     if (activeExam?.id === exam.id) activeExam.markers = exam.markers;
+    renderResult(exam);
+  }
+
+  function setPostMarker(exam, index, marker) {
+    ensureExamShape(exam);
+    exam.postMarkers[index] = exam.postMarkers[index] === marker ? null : marker;
+    const idx = exams.findIndex(e => e.id === exam.id);
+    if (idx >= 0) { exams[idx] = exam; saveExams(); }
+    if (activeExam?.id === exam.id) activeExam.postMarkers = exam.postMarkers;
+    renderResult(exam);
+  }
+
+  function toggleResolved(exam, index) {
+    ensureExamShape(exam);
+    exam.resolved[index] = !exam.resolved[index];
+    const idx = exams.findIndex(e => e.id === exam.id);
+    if (idx >= 0) { exams[idx] = exam; saveExams(); }
+    if (activeExam?.id === exam.id) activeExam.resolved = exam.resolved;
     renderResult(exam);
   }
 
@@ -656,6 +700,7 @@
     saveExams();
     clearIncomplete();
     $("keyDialog").close();
+    resultWrongOnly = false;
     renderResult(activeExam);
     showView("result");
   }
@@ -797,6 +842,8 @@
     });
   }
 
+  let resultWrongOnly = false;
+
   function renderResult(exam) {
     exam = ensureExamShape(exam);
     $("resultSubtitle").textContent = `${exam.name} · ${formatDate(exam.startTime)}${exam.endTime ? " تا " + formatDate(exam.endTime) : ""}`;
@@ -806,32 +853,39 @@
     $("resultBlank").textContent = faNum(exam.blank);
     $("resultTotalTime").textContent = formatTime(exam.totalTime);
     $("resultAverage").textContent = formatTime(exam.questionNumbers.length ? exam.totalTime / exam.questionNumbers.length : 0);
+    const card = $("resultWrongCard");
+    if (card) card.classList.toggle("active-filter", resultWrongOnly);
+    const hint = $("resultFilterHint");
+    if (hint) hint.classList.toggle("hidden", !resultWrongOnly);
 
-    const rows = exam.questionNumbers.map((num, i) => {
+    const rows = exam.questionNumbers.map((num, i) => ({num,i})).filter(x => !resultWrongOnly || exam.statuses[x.i] === "wrong").map(({num,i}) => {
       const status = exam.statuses[i];
       const label = status === "correct" ? "درست" : status === "wrong" ? "غلط" : status === "unanswered" ? "نزده" : "بدون کلید";
       const cls = status === "correct" ? "correct" : status === "wrong" ? "wrong" : "blank";
       const ans = exam.answers[i] == null ? "−" : faNum(exam.answers[i]);
       const key = exam.key[i] == null ? "−" : faNum(exam.key[i]);
-      const markerButtons = Object.keys(markerLabels).map(marker => {
+      const examButtons = Object.keys(markerLabels).map(marker => {
         const m = markerLabels[marker];
         return `<button class="result-edit-marker ${exam.markers[i] === marker ? "active" : ""}" data-result-marker="${marker}" data-result-index="${i}" title="${m.label}">${m.icon}</button>`;
       }).join("");
-      return `<tr><td>${faNum(num)}</td><td>${ans}</td><td>${key}</td><td><span class="status ${cls}">${label}</span></td><td><div class="result-marker-controls">${markerButtons}</div>${exam.markers[i] ? markerHtml(exam.markers[i]) : ""}</td><td>${formatTime(exam.questionTimes[i])}</td></tr>`;
+      const postButtons = Object.keys(postMarkerLabels).map(marker => {
+        const m = postMarkerLabels[marker];
+        return `<button class="result-post-marker ${exam.postMarkers[i] === marker ? "active" : ""}" data-post-marker="${marker}" data-result-index="${i}" title="${m.label}">${m.icon}</button>`;
+      }).join("");
+      const resolved = exam.resolved[i];
+      const postLabel = exam.postMarkers[i] ? `${postMarkerLabels[exam.postMarkers[i]].icon} ${postMarkerLabels[exam.postMarkers[i]].label}` : "−";
+      return `<tr><td>${faNum(num)}</td><td>${ans}</td><td>${key}</td><td><span class="status ${cls}">${label}</span></td><td><div class="result-marker-group"><small>علامت آزمون</small><div class="result-marker-controls">${examButtons}</div>${exam.markers[i] ? markerHtml(exam.markers[i]) : "−"}</div></td><td><div class="result-marker-group"><small>بعد از رفع اشکال</small><div class="result-marker-controls">${postButtons}</div><span class="post-label">${postLabel}</span></div></td><td><button type="button" class="resolve-btn ${resolved ? "resolved" : ""}" data-resolve-index="${i}">${resolved ? "✓ رفع شد" : "○ بررسی شد؟"}</button></td><td>${formatTime(exam.questionTimes[i])}</td></tr>`;
     }).join("");
 
     $("resultTableWrap").innerHTML = `
       <table class="result-table">
-        <thead><tr><th>سؤال</th><th>پاسخ</th><th>کلید</th><th>وضعیت</th><th>علامت</th><th>زمان</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>سؤال</th><th>پاسخ</th><th>کلید</th><th>وضعیت</th><th>علامت آزمون</th><th>بعد از رفع اشکال</th><th>وضعیت اشکال</th><th>زمان</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8">در این فیلتر سؤالی وجود ندارد.</td></tr>`}</tbody>
       </table>`;
     renderSmartAnalysis(exam);
-    $("resultTableWrap").querySelectorAll("[data-result-marker]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const i = Number(btn.dataset.resultIndex);
-        setStoredMarker(exam, i, btn.dataset.resultMarker);
-      });
-    });
+    $("resultTableWrap").querySelectorAll("[data-result-marker]").forEach(btn => btn.addEventListener("click", () => setStoredMarker(exam, Number(btn.dataset.resultIndex), btn.dataset.resultMarker)));
+    $("resultTableWrap").querySelectorAll("[data-post-marker]").forEach(btn => btn.addEventListener("click", () => setPostMarker(exam, Number(btn.dataset.resultIndex), btn.dataset.postMarker)));
+    $("resultTableWrap").querySelectorAll("[data-resolve-index]").forEach(btn => btn.addEventListener("click", () => toggleResolved(exam, Number(btn.dataset.resolveIndex))));
   }
 
   function exportResultPdf(exam) {
@@ -964,6 +1018,13 @@
     const btn = $(id);
     if (btn) btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); goHome(); }, true);
   });
+
+  if ($("resultWrongCard")) {
+    $("resultWrongCard").addEventListener("click", () => {
+      resultWrongOnly = !resultWrongOnly;
+      if (activeExam && activeExam.status === "completed") renderResult(activeExam);
+    });
+  }
   $("newExamTop").addEventListener("click", openCreate);
   $("newExamEmpty").addEventListener("click", openCreate);
   $("backHomeFromCreate").addEventListener("click", () => { renderHome(); showView("home"); });

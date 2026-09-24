@@ -71,10 +71,11 @@
             <span>علامت سؤال</span>
             <select id="markerFilter">
               <option value="">همه</option>
-              <option value="hard">★ سخت</option>
+              <option value="hard">● سخت</option>
+              <option value="doubt">? با شک</option>
               <option value="unknown">× بلد نبودم</option>
-              <option value="careless">− بی‌دقتی</option>
-              <option value="review">○ مرور</option>
+              <option value="selected">★ تست منتخب</option>
+              <option value="wrong">✕ غلط‌ها</option>
             </select>
           </label>
           <label class="field range-filter">
@@ -250,10 +251,9 @@
                 <span class="hint">با انتخاب دوباره، علامت حذف می‌شود.</span>
               </div>
               <div id="markers" class="markers">
-                <button class="marker-btn hard" data-marker="hard" title="سؤال سخت"><span>★</span> سخت</button>
+                <button class="marker-btn hard" data-marker="hard" title="سؤال سخت"><span>🔴</span> سخت</button>
+                <button class="marker-btn doubt" data-marker="doubt" title="با شک زدم"><span>?</span> با شک</button>
                 <button class="marker-btn unknown" data-marker="unknown" title="بلد نبودم"><span>×</span> بلد نبودم</button>
-                <button class="marker-btn careless" data-marker="careless" title="بی‌دقتی"><span>−</span> بی‌دقتی</button>
-                <button class="marker-btn review" data-marker="review" title="برای مرور"><span>○</span> مرور</button>
               </div>
             </div>
           </div>
@@ -280,7 +280,7 @@
       <div class="stats-grid">
         <div class="stat-card"><span>درصد</span><strong id="resultPercent">۰٪</strong></div>
         <div class="stat-card"><span>درست</span><strong id="resultCorrect">۰</strong></div>
-        <div class="stat-card"><span>غلط</span><strong id="resultWrong">۰</strong></div>
+        <button type="button" class="stat-card stat-card-button" id="resultWrongCard" title="نمایش فقط سؤال‌های غلط"><span>غلط</span><strong id="resultWrong">۰</strong></button>
         <div class="stat-card"><span>نزده</span><strong id="resultBlank">۰</strong></div>
         <div class="stat-card"><span>زمان کل</span><strong id="resultTotalTime">۰۰:۰۰</strong></div>
         <div class="stat-card"><span>میانگین هر سؤال</span><strong id="resultAverage">۰۰:۰۰</strong></div>
@@ -288,8 +288,8 @@
 
       <section class="card">
         <div class="section-head">
-          <h3>تحلیل سؤال‌به‌سؤال</h3>
-          <span class="muted">سبز درست · قرمز غلط · خاکستری نزده</span>
+          <div><h3>تحلیل سؤال‌به‌سؤال</h3><span class="muted">سبز درست · قرمز غلط · خاکستری نزده</span></div>
+          <span id="resultFilterHint" class="result-filter-hint hidden">فقط سؤال‌های غلط نمایش داده می‌شود</span>
         </div>
         <div id="resultTableWrap" class="result-table-wrap"></div>
       </section>

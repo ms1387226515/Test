@@ -41,6 +41,11 @@ dialog{border:0;border-radius:18px;padding:0;max-width:420px;width:calc(100% - 3
 .markers{display:flex;flex-wrap:wrap;gap:8px}
 .marker-btn{border:1px solid var(--border);background:#fff;color:#475569;border-radius:999px;padding:7px 11px;min-height:38px;font-size:11px;font-weight:800;display:flex;align-items:center;gap:6px}
 .marker-btn span{font-size:17px;line-height:1}
+.marker-btn span{filter:grayscale(1);opacity:.72}
+.marker-btn.active span{filter:none;opacity:1}
+.marker-btn.hard.active span{color:#a16207}
+.marker-btn.doubt.active span{color:#6d28d9}
+.marker-btn.unknown.active span{color:#dc2626}
 .marker-btn.active{box-shadow:0 0 0 2px rgba(37,99,235,.12)}
 .marker-btn.hard.active{border-color:#64748b;background:#f1f5f9;color:#111827}
 .marker-btn.unknown.active{border-color:#fecaca;background:var(--red-soft);color:var(--red)}
@@ -233,3 +238,40 @@ strong, b,
 .study-hero h3 {
   font-weight: 800 !important;
 }
+
+/* v14.4: separate exam-time markers from post-exam review marks */
+.marker-btn.doubt.active{border-color:#c4b5fd;background:#f5f3ff;color:#6d28d9}
+.marker-chip.doubt{background:#f5f3ff;color:#6d28d9}
+.marker-chip.wrong-mark{background:var(--red-soft);color:var(--red)}
+.stat-card-button{font:inherit;color:inherit;cursor:pointer;width:100%;transition:.15s ease}
+.stat-card-button.active-filter{border-color:#fca5a5;background:#fff7f7;box-shadow:0 0 0 3px rgba(220,38,38,.08)}
+.result-filter-hint{padding:5px 9px;border-radius:999px;background:var(--red-soft);color:var(--red);font-size:11px;font-weight:800}
+.result-marker-group{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:112px}.result-marker-group small{color:var(--muted);font-size:9px;font-weight:800}.result-post-marker{border:1px solid var(--border);background:#fff;border-radius:8px;width:28px;height:28px;font-weight:900;cursor:pointer}.result-post-marker.active{border-color:#2563eb;background:#eff6ff;box-shadow:0 0 0 2px rgba(37,99,235,.1)}.post-label{font-size:10px;font-weight:800;color:#475569}.resolve-btn{border:1px solid var(--border);background:#fff;border-radius:9px;padding:6px 8px;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}.resolve-btn.resolved{border-color:#86efac;background:#f0fdf4;color:#15803d}
+@media(max-width:620px){.result-marker-group{min-width:96px}.result-table th,.result-table td{padding:8px 6px}.resolve-btn{font-size:9px;padding:5px 6px}}
+
+/* v14.7: marker controls stay completely neutral until selected */
+.marker-btn,
+.result-edit-marker,
+.result-post-marker{color:#64748b!important;background:#fff!important;border-color:var(--border)!important;box-shadow:none!important;filter:none;opacity:1}
+.marker-btn span,
+.result-edit-marker{filter:grayscale(1);opacity:.62}
+.marker-btn.active span,
+.result-edit-marker.active{filter:none;opacity:1}
+.marker-btn.active{color:#64748b!important;background:#fff!important;border-color:var(--border)!important;box-shadow:none!important}
+.marker-btn.hard.active span{color:#dc2626!important}
+.marker-btn.doubt.active span{color:#7c3aed!important}
+.marker-btn.unknown.active span{color:#dc2626!important}
+.result-edit-marker.active{color:#64748b!important;background:#fff!important;border-color:var(--border)!important;box-shadow:none!important}
+.result-edit-marker[data-result-marker="careless"].active{color:#f97316!important}
+.result-edit-marker[data-result-marker="unknown_after"].active{color:#dc2626!important}
+.result-edit-marker[data-result-marker="selected"].active{color:#eab308!important}
+.result-post-marker.active{color:#64748b!important;background:#fff!important;border-color:var(--border)!important;box-shadow:none!important}
+
+/* v14.8: neutral text glyphs for markers, colored only when selected */
+.marker-btn span,.result-edit-marker,.result-post-marker{font-family:Arial,sans-serif;font-weight:900;color:#64748b!important;filter:none!important;opacity:1!important;}
+.marker-btn.active.hard span,.result-edit-marker.active[data-result-marker="hard"]{color:#dc2626!important;}
+.marker-btn.active.doubt span,.result-edit-marker.active[data-result-marker="doubt"]{color:#7c3aed!important;}
+.marker-btn.active.unknown span,.result-edit-marker.active[data-result-marker="unknown"]{color:#dc2626!important;}
+.result-post-marker.active[data-post-marker="careless"]{color:#f97316!important;}
+.result-post-marker.active[data-post-marker="unknown_after"]{color:#dc2626!important;}
+.result-post-marker.active[data-post-marker="selected"]{color:#eab308!important;}
